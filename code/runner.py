@@ -1,40 +1,41 @@
 import getopt
 import sys
+from os.path import join, basename
 
 import utils
 import constants as c
 
-def run(path):
-    ##
-    # TODO: Read input
-    ##
-    imgs = utils.read_input(path)
 
-    ##
-    # TODO: Calibrate camera
-    ##
+def run(input_path):
+    # Read input
+    imgs = utils.read_input(input_path)
+
+    # Calibrate camera
     camera_mat, dist_coeffs = utils.calibrate_camera()
 
-    ##
-    # TODO: Correct for distortion
-    ##
-    imgs_undistorted =
+    # Correct for distortion
+    imgs_undistorted = utils.undistort_imgs(imgs, camera_mat, dist_coeffs)
 
-    ##
-    # TODO: Mask images
-    ##
+    # Get masks
+    masks = utils.get_masks(imgs_undistorted)
 
-    ##
-    # TODO: Perspective transform
-    ##
+    # Transform perspective
+    masks_birdseye = utils.birdseye(masks)
 
-    ##
-    # TODO: Find lines and curvature
-    ##
+    # Find lines and curvature
+    l_r_c = utils.find_lines(masks_birdseye)
 
-    ##
-    # TODO: Output image / video
-    ##
+    # Draw lane
+    imgs_superimposed = utils.draw_lane(imgs, l_r_c)
+
+    # Output image / video
+    save_path = join(c.SAVE_DIR, basename(input_path))  # Use same filename as input, but in save directory.
+    utils.save(imgs_superimposed, save_path)
+
+
+##
+# Handle command line input
+##
 
 def print_usage():
     print 'Usage:'
