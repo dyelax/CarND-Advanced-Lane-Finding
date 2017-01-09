@@ -77,6 +77,7 @@ def save(imgs, path):
 
         writer.release()
 
+
 ##
 # Calibration / Image Processing
 ##
@@ -105,9 +106,9 @@ def calibrate_camera():
     obj_points = []  # 3D points in real world space.
     img_points = []  # 2D points in image space.
 
-    # Prepare constant object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0).
-    obj_points_const = np.zeros((6 * 8, 3), np.float32)
-    obj_points_const[:, :2] = np.mgrid[0:8, 0:6].T.reshape(-1, 2)
+    # Prepare constant object points, like (0,0,0), (1,0,0), (2,0,0) ....,(9,6,0).
+    obj_points_const = np.zeros((6 * 9, 3), np.float32)
+    obj_points_const[:, :2] = np.mgrid[0:9, 0:6].T.reshape(-1, 2)
 
     filenames = glob(join(c.CALIBRATION_DIR, '*.jpg'))
     gray_shape = None
@@ -117,7 +118,7 @@ def calibrate_camera():
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray_shape = gray.shape[::-1]
 
-        ret, corners = cv2.findChessboardCorners(gray, (10, 7), None)
+        ret, corners = cv2.findChessboardCorners(gray, (9, 6), None)
 
         if ret:
             obj_points.append(obj_points_const)
@@ -156,32 +157,39 @@ def undistort_imgs(imgs, camera_mat, dist_coeffs):
 # Masking
 ##
 
-def get_s_channel(img):
+def get_hls(img):
     """
-    Returns the saturation channel of a BGR image.
+    Returns the hue, light and saturation channels of a BGR image.
 
-    :param img: The image from which to extract the saturation channel.
+    :param img: The image from which to extract the hsl channels.
 
-    :return: The saturation channel of img.
+    :return: Img in HLS space.
     """
     hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
-    s_channel = hls[:, :, 2]
 
-    return s_channel
+    return hls
 
 
-def quad_mask(img, bl=(), br=(), tl=(), tr=()):
+def quad_mask(img):
     """
     Creates a binary quadrilateral (usually trapezoidal) mask for the image to isolate the area where lane lines are.
 
     :param img: The image for which to create a mask.
-    :param bl: The bottom-left vertex of the quadrilateral.
-    :param br: The bottom-right vertex of the quadrilateral.
-    :param tl: The top-left vertex of the quadrilateral.
-    :param tr: The top-right vertex of the quadrilateral.
 
     :return: A binary mask with all pixels from img inside the quadrilateral masked.
     """
+    height, width = img.shape[:2]
+    bl = (width / 2 - 450, height - 20)  # The bottom-left vertex of the quadrilateral.
+    br = (width / 2 + 650, height - 20)  # The bottom-right vertex of the quadrilateral.
+    tl = (width / 2 - 50, height / 2 + 70)  # The top-left vertex of the quadrilateral.
+    tr = (width / 2 + 50, height / 2 + 70)  # The top-right vertex of the quadrilateral.
+
+    # # Test (all inclusive)
+    # bl = (0, height)  # The bottom-left vertex of the quadrilateral.
+    # br = (width, height)  # The bottom-right vertex of the quadrilateral.
+    # tl = (1, 0)  # The top-left vertex of the quadrilateral.
+    # tr = (width - 1, 0)  # The top-right vertex of the quadrilateral.
+
     fit_left = np.polyfit((bl[0], tl[0]), (bl[1], tl[1]), 1)
     fit_right = np.polyfit((br[0], tr[0]), (br[1], tr[1]), 1)
     fit_bottom = np.polyfit((bl[0], br[0]), (bl[1], br[1]), 1)
@@ -189,26 +197,30 @@ def quad_mask(img, bl=(), br=(), tl=(), tr=()):
 
     # Find the region inside the lines
     xs, ys = np.meshgrid(np.arange(0, img.shape[1]), np.arange(0, img.shape[0]))
-    mask = (xs > (ys * fit_left[0] + fit_left[1])) & \
-           (xs < (ys * fit_right[0] + fit_right[1])) & \
+    mask = (ys > (xs * fit_left[0] + fit_left[1])) & \
+           (ys > (xs * fit_right[0] + fit_right[1])) & \
            (ys > (xs * fit_top[0] + fit_top[1])) & \
            (ys < (xs * fit_bottom[0] + fit_bottom[1]))
 
     return mask
 
 
-def color_mask(img, thresh=(170, 255)):
+def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3)):
     """
     Creates a binary mask for an image based on threshold values of the saturation channel.
 
     :param img: The image for which to create a mask.
-    :param thresh: The threshold values between which to mask.
+    :param thresh_s: The saturation threshold values between which to mask.
+    :param thresh_h: The hue threshold values between which to mask.
 
-    :return: A binary mask with all pixels from img with saturation level inside the threshold masked.
+    :return: A binary mask with all pixels from img with hue and saturation levels inside the thresholds masked.
     """
-    s_channel = get_s_channel(img)
+    hls = get_hls(img)
+    h_channel = hls[:, :, 0]
+    s_channel = hls[:, :, 2]
 
-    mask = (s_channel > thresh[0]) & (s_channel < thresh[1])
+    mask = ((s_channel > thresh_s[0]) & (s_channel < thresh_s[1])) | \
+           ((h_channel > thresh_h[0]) & (h_channel < thresh_h[1]))
 
     return mask
 
@@ -222,7 +234,7 @@ def grad_mask(img, thresh=(20, 100)):
 
     :return: A binary mask with all pixels from img with saturation level inside the threshold masked.
     """
-    s_channel = get_s_channel(img)
+    s_channel = get_hls(img)[:, :, 2]
 
     # Take the gradient in the x direction.
     sx = cv2.Sobel(s_channel, cv2.CV_64F, 1, 0)
@@ -246,7 +258,7 @@ def get_masks(imgs):
     masks = np.empty(imgs.shape[:-1])
 
     for i, img, in enumerate(imgs):
-        masks[i] = np.uint8(quad_mask(img) & color_mask(img) & grad_mask(img))
+        masks[i] = np.uint8(quad_mask(img) & (color_mask(img) | grad_mask(img)))
 
     return masks
 
@@ -261,10 +273,27 @@ def birdseye(imgs):
     """
     imgs_birdseye = np.empty_like(imgs)
 
-    # TODO: Get source and destination rects.
-    trans_mat = cv2.getPerspectiveTransform(dst, src)
+    height, width = imgs.shape[1:3]
+
+    # Points picked from an image with straight lane lines.
+    src = np.float32([
+        (300, 686),
+        (1115, 686),
+        (586, 477),
+        (756, 477)
+    ])
+    # Mapping from those points to a rectangle for a birdseye view.
+    dst = np.float32([
+        (200, 720),
+        (1080, 720),
+        (200, 400),
+        (1080, 400)
+    ])
+
+    trans_mat = cv2.getPerspectiveTransform(src, dst)
     for i, img in enumerate(imgs):
-        imgs_birdseye[i] = cv2.warpPerspective(img, trans_mat, img.shape, flags=cv2.INTER_LINEAR)
+        warped = cv2.warpPerspective(img, trans_mat, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
+        imgs_birdseye[i] = warped
 
     return imgs_birdseye
 
@@ -374,13 +403,13 @@ def draw_lane(imgs, l_r_c):
 # Testing
 ##
 
-def display_image(img):
+def display_images(imgs):
     """
     Displays an image and waits for a keystroke to dismiss and continue.
 
-    :param img: The image to display
+    :param imgs: The images to display
     """
-    cv2.imshow('image', img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
+    for img in imgs:
+        cv2.imshow('image', img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()

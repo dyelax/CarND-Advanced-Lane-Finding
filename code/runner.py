@@ -20,17 +20,18 @@ def run(input_path):
     masks = utils.get_masks(imgs_undistorted)
 
     # Transform perspective
-    masks_birdseye = utils.birdseye(masks)
+    masks_birdseye = utils.birdseye(masks)  # TODO: Maybe not good enough.
+    utils.display_images(masks_birdseye)
 
-    # Find lines and curvature
-    l_r_c = utils.find_lines(masks_birdseye)
-
-    # Draw lane
-    imgs_superimposed = utils.draw_lane(imgs, l_r_c)
-
-    # Output image / video
-    save_path = join(c.SAVE_DIR, basename(input_path))  # Use same filename as input, but in save directory.
-    utils.save(imgs_superimposed, save_path)
+    # # Find lines and curvature
+    # l_r_c = utils.find_lines(masks_birdseye)
+    #
+    # # Draw lane
+    # imgs_superimposed = utils.draw_lane(imgs, l_r_c)
+    #
+    # # Output image / video
+    # save_path = join(c.SAVE_DIR, basename(input_path))  # Use same filename as input, but in save directory.
+    # utils.save(imgs_superimposed, save_path)
 
 
 ##
@@ -53,8 +54,9 @@ if __name__ == "__main__":
     for opt, arg in opts:
         if opt in ('-p', '--path'):
             path = arg
-        else:
-            print_usage()
-            sys.exit(2)
+
+    if path is None:
+        print_usage()
+        sys.exit(2)
 
     run(path)
