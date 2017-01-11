@@ -21,7 +21,6 @@ def run(input_path):
 
     # Transform perspective
     masks_birdseye = utils.birdseye(masks)  # TODO: Maybe not good enough.
-    utils.display_images(masks_birdseye)
 
     # # Find lines and curvature
     # l_r_c = utils.find_lines(masks_birdseye)
@@ -33,6 +32,23 @@ def run(input_path):
     # save_path = join(c.SAVE_DIR, basename(input_path))  # Use same filename as input, but in save directory.
     # utils.save(imgs_superimposed, save_path)
 
+    import numpy as np
+    imgs_final = masks_birdseye
+    return imgs_final
+
+##
+# TEST
+##
+
+from glob import glob
+def test():
+    paths = glob(join(c.TEST_DIR, 'test*.jpg'))
+    for path in paths:
+        img = run(path)
+
+        save_path = join(c.SAVE_DIR, 'test_' + basename(path))
+        utils.save(img * 255, save_path)
+
 
 ##
 # Handle command line input
@@ -41,12 +57,13 @@ def run(input_path):
 def print_usage():
     print 'Usage:'
     print '(-p / --path=) <path/to/image/or/video>'
+    print '(-T / --test)  (Boolean flag. Whether to run the test function instead of normal run.)'
 
 if __name__ == "__main__":
     path = None
 
     try:
-        opts, _ = getopt.getopt(sys.argv[1:], 'p:', ['path='])
+        opts, _ = getopt.getopt(sys.argv[1:], 'p:T', ['path=', 'test'])
     except getopt.GetoptError:
         print_usage()
         sys.exit(2)
@@ -54,6 +71,9 @@ if __name__ == "__main__":
     for opt, arg in opts:
         if opt in ('-p', '--path'):
             path = arg
+        if opt in ('-T', '--test'):
+            test()
+            sys.exit(2)
 
     if path is None:
         print_usage()

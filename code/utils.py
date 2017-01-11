@@ -157,6 +157,17 @@ def undistort_imgs(imgs, camera_mat, dist_coeffs):
 # Masking
 ##
 
+def get_gray(img):
+    """
+    Converts a BGR image to grayscale.
+
+    :param img: The image to be converted to grayscale
+
+    :return: Img in grayscale.
+    """
+    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+
 def get_hls(img):
     """
     Returns the hue, light and saturation channels of a BGR image.
@@ -204,8 +215,33 @@ def quad_mask(img):
 
     return mask
 
+def tri_anti_mask(img):
+    """
+    Creates a binary quadrilateral (usually trapezoidal) mask for the image to isolate the area where lane lines are.
 
-def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3)):
+    :param img: The image for which to create a mask.
+
+    :return: A binary mask with all pixels from img inside the quadrilateral masked.
+    """
+    height, width = img.shape[:2]
+    t = (width / 2, height / 2 + 120)
+    bl = (width / 2 - 300, height - 20)
+    br = (width / 2 + 450, height - 20)
+
+    fit_left = np.polyfit((bl[0], t[0]), (bl[1], t[1]), 1)
+    fit_right = np.polyfit((br[0], t[0]), (br[1], t[1]), 1)
+    fit_bottom = np.polyfit((bl[0], br[0]), (bl[1], br[1]), 1)
+
+    # Find the region outside the lines
+    xs, ys = np.meshgrid(np.arange(0, img.shape[1]), np.arange(0, img.shape[0]))
+    mask = (ys < (xs * fit_left[0] + fit_left[1])) | \
+           (ys < (xs * fit_right[0] + fit_right[1])) | \
+           (ys > (xs * fit_bottom[0] + fit_bottom[1]))
+
+    return mask
+
+
+def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3), thresh_gray=(40,255)):
     """
     Creates a binary mask for an image based on threshold values of the saturation channel.
 
@@ -219,8 +255,11 @@ def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3)):
     h_channel = hls[:, :, 0]
     s_channel = hls[:, :, 2]
 
-    mask = ((s_channel > thresh_s[0]) & (s_channel < thresh_s[1])) | \
-           ((h_channel > thresh_h[0]) & (h_channel < thresh_h[1]))
+    gray = get_gray(img)
+
+    mask = ((((s_channel > thresh_s[0]) & (s_channel < thresh_s[1])) |
+             ((h_channel > thresh_h[0]) & (h_channel < thresh_h[1]))) &
+            ((gray > thresh_gray[0]) & (gray < thresh_gray[1])))
 
     return mask
 
@@ -258,45 +297,38 @@ def get_masks(imgs):
     masks = np.empty(imgs.shape[:-1])
 
     for i, img, in enumerate(imgs):
-        masks[i] = np.uint8(quad_mask(img) & (color_mask(img) | grad_mask(img)))
+        masks[i] = np.uint8((quad_mask(img) & tri_anti_mask(img)) &
+                            (color_mask(img) | grad_mask(img)))
 
     return masks
 
 
-def birdseye(imgs):
+def birdseye(imgs, inverse=False):
     """
-    Shift the perspective of an image to a birdseye view.
+    Shift the perspective of an image to or from a birdseye view.
 
     :param imgs: The images to be transformed.
+    :param inverse: Whether to do an inverse transformation (ie. birdseye to normal).
+                    Default = False.
 
-    :return: The images, perspective shifted to a birdseye view.
+    :return: The perspective shifted images.
     """
-    imgs_birdseye = np.empty_like(imgs)
-
+    imgs_transformed = np.empty_like(imgs)
     height, width = imgs.shape[1:3]
 
-    # Points picked from an image with straight lane lines.
-    src = np.float32([
-        (300, 686),
-        (1115, 686),
-        (586, 477),
-        (756, 477)
-    ])
-    # Mapping from those points to a rectangle for a birdseye view.
-    dst = np.float32([
-        (200, 720),
-        (1080, 720),
-        (200, 400),
-        (1080, 400)
-    ])
+    if inverse:
+        src = c.DST
+        dst = c.SRC
+    else:
+        src = c.SRC
+        dst = c.DST
 
     trans_mat = cv2.getPerspectiveTransform(src, dst)
     for i, img in enumerate(imgs):
-        warped = cv2.warpPerspective(img, trans_mat, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
-        imgs_birdseye[i] = warped
+        transformed = cv2.warpPerspective(img, trans_mat, (width, height), flags=cv2.INTER_LINEAR)
+        imgs_transformed[i] = transformed
 
-    return imgs_birdseye
-
+    return imgs_transformed
 
 ##
 # Find lines
