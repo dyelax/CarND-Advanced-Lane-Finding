@@ -3,6 +3,7 @@ import cv2
 from glob import glob
 from os.path import join, exists, splitext
 import pickle
+import matplotlib.pyplot as plt
 
 import constants as c
 from line import Line
@@ -193,7 +194,7 @@ def quad_mask(img):
     bl = (width / 2 - 450, height - 20)  # The bottom-left vertex of the quadrilateral.
     br = (width / 2 + 650, height - 20)  # The bottom-right vertex of the quadrilateral.
     tl = (width / 2 - 50, height / 2 + 70)  # The top-left vertex of the quadrilateral.
-    tr = (width / 2 + 50, height / 2 + 70)  # The top-right vertex of the quadrilateral.
+    tr = (width / 2 + 80, height / 2 + 70)  # The top-right vertex of the quadrilateral.
 
     # # Test (all inclusive)
     # bl = (0, height)  # The bottom-left vertex of the quadrilateral.
@@ -226,7 +227,7 @@ def tri_anti_mask(img):
     height, width = img.shape[:2]
     t = (width / 2, height / 2 + 120)
     bl = (width / 2 - 300, height - 20)
-    br = (width / 2 + 450, height - 20)
+    br = (width / 2 + 420, height - 20)
 
     fit_left = np.polyfit((bl[0], t[0]), (bl[1], t[1]), 1)
     fit_right = np.polyfit((br[0], t[0]), (br[1], t[1]), 1)
@@ -248,6 +249,7 @@ def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3), thresh_gray=(40,255)):
     :param img: The image for which to create a mask.
     :param thresh_s: The saturation threshold values between which to mask.
     :param thresh_h: The hue threshold values between which to mask.
+    :param thresh_gray: The grayscale threshold values between which to mask.
 
     :return: A binary mask with all pixels from img with hue and saturation levels inside the thresholds masked.
     """
@@ -257,6 +259,8 @@ def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3), thresh_gray=(40,255)):
 
     gray = get_gray(img)
 
+    # display_images([h_channel, s_channel, gray])
+
     mask = ((((s_channel > thresh_s[0]) & (s_channel < thresh_s[1])) |
              ((h_channel > thresh_h[0]) & (h_channel < thresh_h[1]))) &
             ((gray > thresh_gray[0]) & (gray < thresh_gray[1])))
@@ -264,23 +268,49 @@ def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3), thresh_gray=(40,255)):
     return mask
 
 
-def grad_mask(img, thresh=(20, 100)):
+def sobel(img, x=True, y=False, scaled=True):
+    """
+    Calculate the scaled Sobel operation on an image.
+
+    :param img: The image on which to perform Sobel.
+    :param x: Whether to perform Sobel on the x axis.
+    :param y: Whether to perform Sobel on the y axis.
+    :param scaled: Whether to scale the result to the range [0, 255] (True) or keep in the range [0, 1] (False).
+
+    :return: The result of the Sobel operation applied to img on the specified axis.
+    """
+    s = cv2.Sobel(img, cv2.CV_64F, x, y)
+    s_abs = np.abs(s)
+    scale = 255 if scaled else 1
+    s_scaled = np.uint8(scale * s_abs / np.max(s_abs))
+
+    return s_scaled
+
+
+def grad_mask(img, thresh_s=(20, 100), thresh_gray=(50, 255)):
     """
     Creates a binary mask for an image based on threshold values of the x gradient (detecting vertical lines).
 
     :param img: The image for which to create a mask.
-    :param thresh: The threshold values between which to mask.
+    :param thresh_s: The saturation gradient threshold values between which to mask.
+    :param thresh_gray: The grayscale gradient threshold values between which to mask.
 
     :return: A binary mask with all pixels from img with saturation level inside the threshold masked.
     """
     s_channel = get_hls(img)[:, :, 2]
+    gray = get_gray(img)
 
     # Take the gradient in the x direction.
-    sx = cv2.Sobel(s_channel, cv2.CV_64F, 1, 0)
-    sx_abs = np.absolute(sx)
-    sx_scaled = np.uint8(255 * sx_abs / np.max(sx_abs))
+    sobel_s = sobel(s_channel)
+    sobel_gray = sobel(gray)
 
-    mask = (sx_scaled > thresh[0]) & (sx_scaled < thresh[1])
+    # TEST to compare adding in gray -- RESULT: definitely helpful on some images, and never really damaging.
+    # display_images([np.uint8((sobel_s > thresh_s[0]) & (sobel_s < thresh_s[1])) * 255,
+    #                 np.uint8(((sobel_s > thresh_s[0]) & (sobel_s < thresh_s[1])) |
+    #                          ((sobel_gray > thresh_gray[0]) & (sobel_gray < thresh_gray[1]))) * 255])
+
+    mask = (((sobel_s > thresh_s[0]) & (sobel_s < thresh_s[1])) |
+            ((sobel_gray > thresh_gray[0]) & (sobel_gray < thresh_gray[1])))
 
     return mask
 
@@ -299,6 +329,11 @@ def get_masks(imgs):
     for i, img, in enumerate(imgs):
         masks[i] = np.uint8((quad_mask(img) & tri_anti_mask(img)) &
                             (color_mask(img) | grad_mask(img)))
+
+        # # TEST to check geometric masking
+        # masks[i] = np.uint8((quad_mask(img) & tri_anti_mask(img)))
+        #
+        # display_images([img, img * np.dstack([np.uint8(masks[i])]*3)])
 
     return masks
 
@@ -330,6 +365,7 @@ def birdseye(imgs, inverse=False):
 
     return imgs_transformed
 
+
 ##
 # Find lines
 ##
@@ -356,6 +392,7 @@ def fit_line(points, meter_space=True):
     fit = np.polyfit(points[1] * ymult, points[0] * xmult, 2)
 
     return fit
+
 
 def get_curvature_radius(line, y):
     """
@@ -385,6 +422,72 @@ def lines_good(l, r):
     pass
 
 
+def hist_search(img, line_width=100, hist_height=50):
+    """
+    Uses a sliding histogram to search for lane lines in a masked, perspective shifted image.
+
+    :param img: The masked, perspective shifted image containing the lane lines.
+    :param line_width: The width around the histogram peak to accept as the lane.
+    :param hist_height: The height of the sliding window of the histogram.
+
+    :return: A tuple of tuples ((left xs, left ys), (right xs, right ys)) of the points in both lane lines.
+    """
+    line_radius = line_width / 2
+
+    left_xs = []
+    left_ys = []
+    right_xs = []
+    right_ys = []
+
+    height, width = img.shape[:2]
+    for i in xrange(0, height, hist_height):
+        # Get slice of the image.
+        window = img[i:i + hist_height, :]
+
+        # Calculate histogram on slice.
+        hist = np.sum(window, axis=0)
+        arr2bar(hist)
+
+        # Find 2 peaks.
+        left_peak = np.argmax(hist)
+        shift = left_peak + 100  # Where to start looking for the next line's peak.
+        right_peak = np.argmax(hist[shift:]) + shift  # Add back in the shift to get the real index.
+
+        # Get a range around the peaks.
+        left_rect = window[:, left_peak - line_radius:left_peak + line_radius]
+        right_rect = window[:, right_peak - line_radius:right_peak + line_radius]
+
+        # Get coordinates of points in rects
+        left_points_relative = np.where(left_rect)  # Relative locations of the points in hist as (rows (y), cols (x))
+        right_points_relative = np.where(right_rect)
+
+        left_points = (left_points_relative[1], left_points_relative[0] + i)  # Absolute locations in img as (x, y)
+        right_points = (right_points_relative[1], right_points_relative[0] + i)
+
+        # Append points
+        np.concatenate([left_xs, left_points[0]])
+        np.concatenate([left_ys, left_points[1]])
+        np.concatenate([right_xs, right_points[0]])
+        np.concatenate([right_ys, right_points[1]])
+
+    return (left_xs, left_ys), (right_ys, right_ys)
+
+# TEST
+def hist_mask_test(img):
+    l, r = hist_search(img)
+    output = np.zeros(img.shape + (3,))
+
+    output[:, :, 0] = img * 255
+    for x, y in zip(l[0], l[1]):
+        output[y, x, 1] = 1
+        output[y, x, 0] = 0
+    for x, y in zip(r[0], r[1]):
+        output[y, x, 2] = 1
+        output[y, x, 0] = 0
+
+    return [output]
+
+
 def find_lines(masks):
     """
     Get lane line equations from image masks.
@@ -396,19 +499,22 @@ def find_lines(masks):
     lines = []
 
     # Create line objects.
-    l = Line()
-    r = Line()
+    left_line = Line()
+    right_line = Line()
 
     for mask in masks:
         # TODO: Look for points based on past lines (within x threshold of prev values)
         # TODO: Fit lines to those points
 
-        if lines_good(l, r):
-            lines.append((l, r))
+        if lines_good(left_line, right_line):
+            lines.append((left_line, right_line))
         else:
-            # TODO: Use histogram to get line points
-            # TODO: Fit lines to those points
-            pass
+            # Use histogram to get line points
+            left_points, right_points = hist_search(mask)
+
+            # Fit lines to those points
+            left_fit = np.polyfit(left_points[0], left_points[1], 2)
+            right_fit = np.polyfit(right_points[0], right_points[1], 2)
 
     return lines
 
@@ -431,9 +537,16 @@ def draw_lane(imgs, l_r_c):
 
     return imgs_superimposed
 
+
 ##
 # Testing
 ##
+
+def arr2bar(arr):
+    fig, ax = plt.subplots()
+    ax.bar(np.arange(len(arr)), arr, 1)
+    plt.show()
+
 
 def display_images(imgs):
     """
@@ -442,6 +555,11 @@ def display_images(imgs):
     :param imgs: The images to display
     """
     for img in imgs:
+        # Conversion for masks
+        if img.dtype == bool:
+            img = np.uint8(img) * 255
+
         cv2.imshow('image', img)
+        cv2.moveWindow('image', 0, 0)
         cv2.waitKey(0)
         cv2.destroyAllWindows()

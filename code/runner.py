@@ -22,8 +22,10 @@ def run(input_path):
     # Transform perspective
     masks_birdseye = utils.birdseye(masks)  # TODO: Maybe not good enough.
 
+    # return utils.hist_mask_test(masks_birdseye[0])
+
     # # Find lines and curvature
-    # l_r_c = utils.find_lines(masks_birdseye)
+    # l_r_c = utils.find_lines(masks_birdseye)  # Left line, right line, curvature.
     #
     # # Draw lane
     # imgs_superimposed = utils.draw_lane(imgs, l_r_c)
@@ -32,7 +34,6 @@ def run(input_path):
     # save_path = join(c.SAVE_DIR, basename(input_path))  # Use same filename as input, but in save directory.
     # utils.save(imgs_superimposed, save_path)
 
-    import numpy as np
     imgs_final = masks_birdseye
     return imgs_final
 
@@ -42,8 +43,10 @@ def run(input_path):
 
 from glob import glob
 def test():
-    paths = glob(join(c.TEST_DIR, 'test*.jpg'))
+    paths = glob(join(c.TEST_DIR, '*.jpg'))
     for path in paths:
+        print path
+
         img = run(path)
 
         save_path = join(c.SAVE_DIR, 'test_' + basename(path))
