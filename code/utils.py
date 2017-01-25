@@ -1,12 +1,13 @@
 import numpy as np
 import cv2
+import skvideo.io
 from glob import glob
 from os.path import join, exists, splitext
 import pickle
 import matplotlib.pyplot as plt
 
 import constants as c
-from line import Line
+from lines import Lines
 
 
 ##
@@ -28,27 +29,30 @@ def read_input(path):
     if ext == '.jpg':
         # Input is a single image.
         img = cv2.imread(path)
-        frames = np.array([img])  # turn into a 4D array so all functions can apply to images and video.
+        # turn into a 4D array so all functions can apply to images and video.
+        frames = np.array([img])
     else:
         # Input is a video.
         vidcap = cv2.VideoCapture(path)
 
         # Get video properties
-        num_frames = vidcap.get(cv2.CAP_PROP_FRAME_COUNT)
-        width = vidcap.get(cv2.CAP_PROP_FRAME_WIDTH)
-        height = vidcap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        # num_frames = vidcap.get(cv2.CAP_PROP_FRAME_COUNT)
+        # width = vidcap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        # height = vidcap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         # Load frames
-        frames = np.empty([num_frames, height, width, 3])
+        frames_list = []
         while vidcap.isOpened():
-            frame_num = vidcap.get(cv2.CAP_PROP_POS_FRAMES)
-
             ret, frame = vidcap.read()
 
             if ret:
-                frames[frame_num] = frame
+                frames_list.append(frame)
+            else:
+                break
 
         vidcap.release()
+
+        frames = np.array(frames_list)
 
     return frames
 
@@ -68,15 +72,8 @@ def save(imgs, path):
         cv2.imwrite(path, imgs[0])
     else:
         # Output is a video.
-        # Define the codec and create VideoWriter object
-        fourcc = cv2.VideoWriter_fourcc(*'FMP4')
-        # Params: path, format, fps, frame size.
-        writer = cv2.VideoWriter(path, fourcc, 30.0, imgs.shape[1:3])
-
-        for img in imgs:
-            writer.write(img)
-
-        writer.release()
+        vid_frames = [cv2.cvtColor(img, cv2.COLOR_BGR2RGB) for img in imgs]
+        skvideo.io.vwrite(path, vid_frames)
 
 
 ##
@@ -126,7 +123,8 @@ def calibrate_camera():
             img_points.append(corners)
 
     # Calculate camera matrix and distortion coefficients and return.
-    ret, camera_mat, dist_coeffs, _, _ = cv2.calibrateCamera(obj_points, img_points, gray_shape, None, None)
+    ret, camera_mat, dist_coeffs, _, _ = cv2.calibrateCamera(
+        obj_points, img_points, gray_shape, None, None)
 
     assert ret, 'CALIBRATION FAILED'  # Make sure calibration didn't fail.
 
@@ -184,7 +182,8 @@ def get_hls(img):
 
 def quad_mask(img):
     """
-    Creates a binary quadrilateral (usually trapezoidal) mask for the image to isolate the area where lane lines are.
+    Creates a binary quadrilateral (usually trapezoidal) mask for the image to isolate the area
+    where lane lines are.
 
     :param img: The image for which to create a mask.
 
@@ -193,14 +192,8 @@ def quad_mask(img):
     height, width = img.shape[:2]
     bl = (width / 2 - 450, height - 20)  # The bottom-left vertex of the quadrilateral.
     br = (width / 2 + 650, height - 20)  # The bottom-right vertex of the quadrilateral.
-    tl = (width / 2 - 50, height / 2 + 70)  # The top-left vertex of the quadrilateral.
-    tr = (width / 2 + 80, height / 2 + 70)  # The top-right vertex of the quadrilateral.
-
-    # # Test (all inclusive)
-    # bl = (0, height)  # The bottom-left vertex of the quadrilateral.
-    # br = (width, height)  # The bottom-right vertex of the quadrilateral.
-    # tl = (1, 0)  # The top-left vertex of the quadrilateral.
-    # tr = (width - 1, 0)  # The top-right vertex of the quadrilateral.
+    tl = (width / 2 - 50, height / 2 + 85)  # The top-left vertex of the quadrilateral.
+    tr = (width / 2 + 80, height / 2 + 85)  # The top-right vertex of the quadrilateral.
 
     fit_left = np.polyfit((bl[0], tl[0]), (bl[1], tl[1]), 1)
     fit_right = np.polyfit((br[0], tr[0]), (br[1], tr[1]), 1)
@@ -218,7 +211,8 @@ def quad_mask(img):
 
 def tri_anti_mask(img):
     """
-    Creates a binary quadrilateral (usually trapezoidal) mask for the image to isolate the area where lane lines are.
+    Creates a binary quadrilateral (usually trapezoidal) mask for the image to isolate the area
+    where lane lines are.
 
     :param img: The image for which to create a mask.
 
@@ -242,7 +236,7 @@ def tri_anti_mask(img):
     return mask
 
 
-def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3), thresh_gray=(40,255)):
+def color_mask(img, thresh_s=(100, 255), thresh_h=(15, 70), thresh_gray=(190,255)):
     """
     Creates a binary mask for an image based on threshold values of the saturation channel.
 
@@ -251,7 +245,8 @@ def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3), thresh_gray=(40,255)):
     :param thresh_h: The hue threshold values between which to mask.
     :param thresh_gray: The grayscale threshold values between which to mask.
 
-    :return: A binary mask with all pixels from img with hue and saturation levels inside the thresholds masked.
+    :return: A binary mask with all pixels from img with hue and saturation levels inside the
+             thresholds masked.
     """
     hls = get_hls(img)
     h_channel = hls[:, :, 0]
@@ -259,27 +254,29 @@ def color_mask(img, thresh_s=(100, 255), thresh_h=(0, 3), thresh_gray=(40,255)):
 
     gray = get_gray(img)
 
-    # display_images([h_channel, s_channel, gray])
+    s_mask = ((s_channel > thresh_s[0]) & (s_channel < thresh_s[1]))
+    h_mask = ((h_channel > thresh_h[0]) & (h_channel < thresh_h[1]))
+    gray_mask = ((gray > thresh_gray[0]) & (gray < thresh_gray[1]))
 
-    mask = ((((s_channel > thresh_s[0]) & (s_channel < thresh_s[1])) |
-             ((h_channel > thresh_h[0]) & (h_channel < thresh_h[1]))) &
-            ((gray > thresh_gray[0]) & (gray < thresh_gray[1])))
+    mask = (s_mask | h_mask | gray_mask)
 
     return mask
 
 
-def sobel(img, x=True, y=False, scaled=True):
+def sobel(img, x=True, y=False, scaled=True, ksize=3):
     """
     Calculate the scaled Sobel operation on an image.
 
     :param img: The image on which to perform Sobel.
     :param x: Whether to perform Sobel on the x axis.
     :param y: Whether to perform Sobel on the y axis.
-    :param scaled: Whether to scale the result to the range [0, 255] (True) or keep in the range [0, 1] (False).
+    :param scaled: Whether to scale the result to the range [0, 255] (True) or keep in the range
+                   [0, 1] (False).
+    :param ksize: The kernel size for the Sobel operation.
 
     :return: The result of the Sobel operation applied to img on the specified axis.
     """
-    s = cv2.Sobel(img, cv2.CV_64F, x, y)
+    s = cv2.Sobel(img, cv2.CV_64F, x, y, ksize=ksize)
     s_abs = np.abs(s)
     scale = 255 if scaled else 1
     s_scaled = np.uint8(scale * s_abs / np.max(s_abs))
@@ -287,30 +284,29 @@ def sobel(img, x=True, y=False, scaled=True):
     return s_scaled
 
 
-def grad_mask(img, thresh_s=(20, 100), thresh_gray=(50, 255)):
+def grad_mask(img, thresh_s=(30, 255), thresh_gray=(50, 255)):
     """
-    Creates a binary mask for an image based on threshold values of the x gradient (detecting vertical lines).
+    Creates a binary mask for an image based on threshold values of the x gradient (detecting
+    vertical lines).
 
     :param img: The image for which to create a mask.
     :param thresh_s: The saturation gradient threshold values between which to mask.
     :param thresh_gray: The grayscale gradient threshold values between which to mask.
 
-    :return: A binary mask with all pixels from img with saturation level inside the threshold masked.
+    :return: A binary mask with all pixels from img with saturation level inside the threshold
+             masked.
     """
     s_channel = get_hls(img)[:, :, 2]
     gray = get_gray(img)
 
     # Take the gradient in the x direction.
-    sobel_s = sobel(s_channel)
-    sobel_gray = sobel(gray)
+    sobel_s = sobel(s_channel, ksize=7)
+    sobel_gray = sobel(gray, ksize=7)
 
-    # TEST to compare adding in gray -- RESULT: definitely helpful on some images, and never really damaging.
-    # display_images([np.uint8((sobel_s > thresh_s[0]) & (sobel_s < thresh_s[1])) * 255,
-    #                 np.uint8(((sobel_s > thresh_s[0]) & (sobel_s < thresh_s[1])) |
-    #                          ((sobel_gray > thresh_gray[0]) & (sobel_gray < thresh_gray[1]))) * 255])
+    s_mask = ((sobel_s > thresh_s[0]) & (sobel_s < thresh_s[1]))
+    gray_mask = ((sobel_gray > thresh_gray[0]) & (sobel_gray < thresh_gray[1]))
 
-    mask = (((sobel_s > thresh_s[0]) & (sobel_s < thresh_s[1])) |
-            ((sobel_gray > thresh_gray[0]) & (sobel_gray < thresh_gray[1])))
+    mask = (s_mask | gray_mask)
 
     return mask
 
@@ -328,12 +324,7 @@ def get_masks(imgs):
 
     for i, img, in enumerate(imgs):
         masks[i] = np.uint8((quad_mask(img) & tri_anti_mask(img)) &
-                            (color_mask(img) | grad_mask(img)))
-
-        # # TEST to check geometric masking
-        # masks[i] = np.uint8((quad_mask(img) & tri_anti_mask(img)))
-        #
-        # display_images([img, img * np.dstack([np.uint8(masks[i])]*3)])
+                            (color_mask(img) & grad_mask(img)))
 
     return masks
 
@@ -370,7 +361,33 @@ def birdseye(imgs, inverse=False):
 # Find lines
 ##
 
-def fit_line(points, meter_space=True):
+def visualize_lines(left_points, right_points, left_line, right_line):
+    """
+    Visualize lane line fits for given line points.
+
+    :param left_points: Points in the left line.
+    :param right_points: Points in the right line.
+    :param left_line: The polynomial fit for the left line.
+    :param right_line: The polynomial fit for the right line.
+    """
+    plt.gcf().clear()
+
+    yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
+
+    left_fit_x = left_line[0] * yvals ** 2 + left_line[1] * yvals + left_line[2]
+    right_fit_x = right_line[0] * yvals ** 2 + right_line[1] * yvals + right_line[2]
+
+    plt.plot(left_points[0], left_points[1], 'o', color='blue')
+    plt.plot(right_points[0], right_points[1], 'o', color='blue')
+    plt.xlim(0, 1280)
+    plt.ylim(0, 720)
+    plt.plot(left_fit_x, yvals, color='green', linewidth=3)
+    plt.plot(right_fit_x, yvals, color='red', linewidth=3)
+    plt.gca().invert_yaxis()  # to visualize as we do the images
+
+    plt.show()
+
+def fit_line(points, meter_space=False):
     """
     Fit a second-order polynomial to the given points.
 
@@ -379,10 +396,8 @@ def fit_line(points, meter_space=True):
 
     :return: The coefficients of the fitted polynomial.
     """
-    # TODO: Define conversions in x and y from pixels space to meters
-    # THESE MAY NOT BE CORRECT
-    mpp_y = 30 / 720  # meters per pixel in y dimension
-    mpp_x = 3.7 / 700  # meteres per pixel in x dimension
+    mpp_y = 30. / 720  # meters per pixel in y dimension
+    mpp_x = 3.7 / 880  # meters per pixel in x dimension
 
     # Determine whether to fit the line in meter or pixel space.
     ymult = mpp_y if meter_space else 1
@@ -398,8 +413,8 @@ def get_curvature_radius(line, y):
     """
     Get the curvature radius of the given lane line at the given y coordinate.
 
-    :param line: The line of which to calculate the curvature radius. NOTE: Must be in real-world coordinates to
-                 accurately calculate road curvature.
+    :param line: The line of which to calculate the curvature radius. NOTE: Must be in real-world
+                 coordinates to accurately calculate road curvature.
 
     :return: The curvature radius of line at y.
     """
@@ -416,24 +431,36 @@ def lines_good(l, r):
 
     :return: A boolean, whether the two lane lines make sense.
     """
-    # TODO: Check similar curvature
-    # TODO: Check parallel
-    # TODO: Check correct width apart
-    pass
+    # Check parallel
+    # parallel_tolerance = 5e-4
+    # parallel = (l[0] > r[0] - parallel_tolerance) and (l[0] < r[0] + parallel_tolerance)
+
+    # Check parallel and correct width apart
+    width_avg = 880  # taken from dst points
+    width_tolerance = 40
+    yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
+    left_fit_x = l[0] * yvals ** 2 + l[1] * yvals + l[2]
+    right_fit_x = r[0] * yvals ** 2 + r[1] * yvals + r[2]
+
+    correct_width = True
+    for l_x, r_x in zip(left_fit_x, right_fit_x):
+        if r_x - l_x < width_avg - width_tolerance or r_x - l_x > width_avg + width_tolerance:
+            correct_width = False
+            break
+
+    return correct_width
 
 
-def hist_search(img, line_width=100, hist_height=50):
+def hist_search(img, hist_height=80):
     """
     Uses a sliding histogram to search for lane lines in a masked, perspective shifted image.
 
     :param img: The masked, perspective shifted image containing the lane lines.
-    :param line_width: The width around the histogram peak to accept as the lane.
     :param hist_height: The height of the sliding window of the histogram.
 
-    :return: A tuple of tuples ((left xs, left ys), (right xs, right ys)) of the points in both lane lines.
+    :return: A tuple of tuples ((left xs, left ys), (right xs, right ys)) of the points in both lane
+             lines.
     """
-    line_radius = line_width / 2
-
     left_xs = []
     left_ys = []
     right_xs = []
@@ -446,31 +473,36 @@ def hist_search(img, line_width=100, hist_height=50):
 
         # Calculate histogram on slice.
         hist = np.sum(window, axis=0)
-        arr2bar(hist)
+        # arr2bar(hist)
 
         # Find 2 peaks.
-        left_peak = np.argmax(hist)
-        shift = left_peak + 100  # Where to start looking for the next line's peak.
-        right_peak = np.argmax(hist[shift:]) + shift  # Add back in the shift to get the real index.
+        middle = width / 2
+        left_peak = np.argmax(hist[:middle])
+        # Add back in the shift to get the real index.
+        right_peak = np.argmax(hist[middle:]) + middle
 
         # Get a range around the peaks.
-        left_rect = window[:, left_peak - line_radius:left_peak + line_radius]
-        right_rect = window[:, right_peak - line_radius:right_peak + line_radius]
+        left_rect = window[:, left_peak - c.LINE_RADIUS:left_peak + c.LINE_RADIUS]
+        right_rect = window[:, right_peak - c.LINE_RADIUS:right_peak + c.LINE_RADIUS]
 
         # Get coordinates of points in rects
-        left_points_relative = np.where(left_rect)  # Relative locations of the points in hist as (rows (y), cols (x))
+        # Relative locations of the points in hist as (rows (y), cols (x))
+        left_points_relative = np.where(left_rect)
         right_points_relative = np.where(right_rect)
 
-        left_points = (left_points_relative[1], left_points_relative[0] + i)  # Absolute locations in img as (x, y)
-        right_points = (right_points_relative[1], right_points_relative[0] + i)
+        # Absolute locations in img as (x, y)
+        left_points = (left_points_relative[1] + left_peak - c.LINE_RADIUS,
+                       left_points_relative[0] + i)
+        right_points = (right_points_relative[1] + right_peak - c.LINE_RADIUS,
+                        right_points_relative[0] + i)
 
         # Append points
-        np.concatenate([left_xs, left_points[0]])
-        np.concatenate([left_ys, left_points[1]])
-        np.concatenate([right_xs, right_points[0]])
-        np.concatenate([right_ys, right_points[1]])
+        left_xs = np.concatenate([left_xs, left_points[0]])
+        left_ys = np.concatenate([left_ys, left_points[1]])
+        right_xs = np.concatenate([right_xs, right_points[0]])
+        right_ys = np.concatenate([right_ys, right_points[1]])
 
-    return (left_xs, left_ys), (right_ys, right_ys)
+    return (left_xs, left_ys), (right_xs, right_ys)
 
 # TEST
 def hist_mask_test(img):
@@ -479,13 +511,35 @@ def hist_mask_test(img):
 
     output[:, :, 0] = img * 255
     for x, y in zip(l[0], l[1]):
-        output[y, x, 1] = 1
+        x, y = int(x), int(y)  # To suppress warnings about float indeces.
+        output[y, x, 1] = 255
         output[y, x, 0] = 0
     for x, y in zip(r[0], r[1]):
-        output[y, x, 2] = 1
+        x, y = int(x), int(y)
+        output[y, x, 2] = 255
         output[y, x, 0] = 0
 
     return [output]
+
+def local_search(img, history):
+    """
+    Finds lane line points based on most recent line fits.
+
+    :param img: The masked, perspective shifted image containing the lane lines.
+    :param history: A list of tuples, (left, right), the line fits used for previous frames.
+
+    :return: A tuple of tuples ((left xs, left ys), (right xs, right ys)) of the points in both lane
+             lines.
+    """
+    try:
+        last_good_fit = [elt for elt in history[-c.RELEVANT_HIST:] if elt is not None][-1]
+    except IndexError:
+        return None, None
+
+    yvals = np.linspace(0, 100, num=101) * 7.2  # to cover same y-range as image
+
+    left_fit_x = left_line[0] * yvals ** 2 + left_line[1] * yvals + left_line[2]
+    right_fit_x = right_line[0] * yvals ** 2 + right_line[1] * yvals + right_line[2]
 
 
 def find_lines(masks):
@@ -494,46 +548,128 @@ def find_lines(masks):
 
     :param masks: Binary mask images of the lane lines.
 
-    :return: A tuple, (left line, right line).
+    :return: A list containing a tuple for each image, (left fit, right fit), or None if the image
+             should be skipped.
     """
     lines = []
 
-    # Create line objects.
-    left_line = Line()
-    right_line = Line()
-
+    # a list where each element is a tuple (left fit, right fit) for a previous frame, or None if no
+    # fit was found for a frame.
+    history = []
     for mask in masks:
-        # TODO: Look for points based on past lines (within x threshold of prev values)
-        # TODO: Fit lines to those points
+        # Choose lines with the following priority:
+        # 1. First, try get the lines from a local search based on past lines found. If those lines
+        #    are good, use them.
+        # 2. If good lines were found in the last c.RELEVANT_HIST frames, use the most recent good
+        #    lines found.
+        # 3. Do a naive histogram search. If those lines are good, use them.
+        # 4. Otherwise, use the last good lines found, regardless of time.
+        # 5. If there has never been a good fit, use the bad histogram search.
 
-        if lines_good(left_line, right_line):
-            lines.append((left_line, right_line))
+        # If a new fit was found and it was good (as opposed to taking a previous fit). Used to
+        # place tuples or nones in history.
+        new_good_fit = True
+
+        # Whether to skip this frame (by appending None to lines)
+        skip_frame = False
+
+        # Priority 1:
+        left_points, right_points = local_search(mask, history)
+        left_fit = fit_line(left_points)
+        right_fit = fit_line(right_points)
+
+        if not lines_good(left_fit, right_fit):
+            # Priority 2:
+            try:
+                last_good = [elt for elt in history[-c.RELEVANT_HIST:] if elt is not None][-1]
+                left_fit, right_fit = last_good
+                new_good_fit = False
+            except IndexError:
+                # No good fits in relevant history
+                # Priority 3:
+                left_points, right_points = hist_search(mask)
+                left_fit = fit_line(left_points)
+                right_fit = fit_line(right_points)
+
+                if not lines_good(left_fit, right_fit):
+                    # Priority 4:
+                    new_good_fit = False
+                    try:
+                        last_good = [elt for elt in history if elt is not None][-1]
+                        left_fit, right_fit = last_good
+
+                    except IndexError:
+                        # There have never been any good fits
+                        skip_frame = True
+
+        # Update history
+        if new_good_fit:
+            history.append((left_fit, right_fit))
         else:
-            # Use histogram to get line points
-            left_points, right_points = hist_search(mask)
+            history.append(None)
 
-            # Fit lines to those points
-            left_fit = np.polyfit(left_points[0], left_points[1], 2)
-            right_fit = np.polyfit(right_points[0], right_points[1], 2)
+        # Update used lines
+        if skip_frame:
+            lines.append(None)
+        else:
+            lines.append((left_fit, right_fit))
 
     return lines
 
 
-def draw_lane(imgs, l_r_c):
+def draw_lane(imgs, lines):
     """
     Superimposes the lane on the original images.
 
     :param imgs: The original images.
-    :param l_r_c: A list containing a tuple for each image, (left line, right line, curvature radius).
+    :param lines: A list containing a tuple for each image, (left fit, right fit), or None if the
+                  image should be skipped.
 
     :return: Images consisting of the lane prediction superimposed on the original street image.
     """
     imgs_superimposed = np.empty_like(imgs)
 
+    yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
     for i, img in enumerate(imgs):
-        # TODO: Get polygon for lane
-        # TODO: Superimpose polygon onto original image
-        pass
+        # Check if frame should be skipped.
+        if lines[i] is None:
+            continue
+
+        left_line, right_line = lines[i]
+
+        # Create an image to draw the lines on
+        overlay_warped = np.zeros_like(img).astype(np.uint8)
+
+        # Recast the x and y points into usable format for cv2.fillPoly()
+        left_fit_x = left_line[0] * yvals ** 2 + left_line[1] * yvals + left_line[2]
+        right_fit_x = right_line[0] * yvals ** 2 + right_line[1] * yvals + right_line[2]
+
+        pts_left = np.array([np.transpose(np.vstack([left_fit_x, yvals]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fit_x, yvals])))])
+        pts = np.hstack((pts_left, pts_right))
+
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(overlay_warped, np.int_([pts]), (0, 255, 0))
+
+        # Warp the blank back to original image space
+        overlay = birdseye(np.array([overlay_warped]), inverse=True)[0]
+
+        # Overlay curvature text
+        height = img.shape[0]
+        left_fit_m = fit_line(zip(left_fit_x, yvals), meter_space=True)
+        right_fit_m = fit_line(zip(right_fit_x, yvals), meter_space=True)
+        left_curvature = get_curvature_radius(left_fit_m, height)
+        right_curvature = get_curvature_radius(right_fit_m, height)
+        curvature = (left_curvature + right_curvature) / 2
+
+        cv2.putText(img, "Curvature Radius: " + str(curvature) + 'm', (20, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+        # TODO: overlay distance from lane center
+
+
+        # Combine the result with the original image
+        imgs_superimposed[i] = cv2.addWeighted(img, 1, overlay, 0.3, 0)
 
     return imgs_superimposed
 

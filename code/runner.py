@@ -7,35 +7,29 @@ import constants as c
 
 
 def run(input_path):
-    # Read input
+    print 'Read input'
     imgs = utils.read_input(input_path)
 
-    # Calibrate camera
+    print 'Calibrate camera'
     camera_mat, dist_coeffs = utils.calibrate_camera()
 
-    # Correct for distortion
+    print 'Undistort images'
     imgs_undistorted = utils.undistort_imgs(imgs, camera_mat, dist_coeffs)
 
-    # Get masks
+    print 'Get masks'
     masks = utils.get_masks(imgs_undistorted)
 
-    # Transform perspective
-    masks_birdseye = utils.birdseye(masks)  # TODO: Maybe not good enough.
+    print 'Transform perspective'
+    masks_birdseye = utils.birdseye(masks)
 
-    # return utils.hist_mask_test(masks_birdseye[0])
+    print 'Find lines'
+    # (Left fit, right fit) for each image, or None if image should be skipped
+    lines = utils.find_lines(masks_birdseye)
 
-    # # Find lines and curvature
-    # l_r_c = utils.find_lines(masks_birdseye)  # Left line, right line, curvature.
-    #
-    # # Draw lane
-    # imgs_superimposed = utils.draw_lane(imgs, l_r_c)
-    #
-    # # Output image / video
-    # save_path = join(c.SAVE_DIR, basename(input_path))  # Use same filename as input, but in save directory.
-    # utils.save(imgs_superimposed, save_path)
+    print 'Draw lanes'
+    imgs_superimposed = utils.draw_lane(imgs, lines)
 
-    imgs_final = masks_birdseye
-    return imgs_final
+    return imgs_superimposed
 
 ##
 # TEST
@@ -47,11 +41,11 @@ def test():
     for path in paths:
         print path
 
-        img = run(path)
+        imgs = run(path)
+        # utils.display_images(imgs)
 
         save_path = join(c.SAVE_DIR, 'test_' + basename(path))
-        utils.save(img * 255, save_path)
-
+        utils.save(imgs, save_path)
 
 ##
 # Handle command line input
@@ -59,7 +53,7 @@ def test():
 
 def print_usage():
     print 'Usage:'
-    print '(-p / --path=) <path/to/image/or/video>'
+    print '(-p / --path=) <path/to/image/or/video> (Required)'
     print '(-T / --test)  (Boolean flag. Whether to run the test function instead of normal run.)'
 
 if __name__ == "__main__":
@@ -82,4 +76,8 @@ if __name__ == "__main__":
         print_usage()
         sys.exit(2)
 
-    run(path)
+    imgs_processed = run(path)
+
+    # Save images. Use same filename as input, but in save directory.
+    save_path = join(c.SAVE_DIR, basename(path))
+    utils.save(imgs_processed, save_path)

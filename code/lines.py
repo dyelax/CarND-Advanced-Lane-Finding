@@ -23,3 +23,9 @@ class Line:
         self.allx = None
         # y values for detected line pixels
         self.ally = None
+
+class Lines:
+    def __init__(self):
+        # a list of tuples (left fit, right fit) for previous frames, or None if no fit was found
+        # for a given frame.
+        self.history = []
