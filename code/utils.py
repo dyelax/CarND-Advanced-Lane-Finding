@@ -355,31 +355,24 @@ def birdseye(imgs, inverse=False):
 # Find lines
 ##
 
-def visualize_lines(left_points, right_points, left_line, right_line):
+def get_line_points(left_fit, right_fit, num_points=101):
     """
-    Visualize lane line fits for given line points.
+    Get the points associated with left and right line fits.
 
-    :param left_points: Points in the left line.
-    :param right_points: Points in the right line.
-    :param left_line: The polynomial fit for the left line.
-    :param right_line: The polynomial fit for the right line.
+    :param left_fit: The polynomial fit for the left lane line.
+    :param right_fit: The polynomial fit for the right lane line.
+    :param num_points: The number of evenly spaced points to plot for each line.
+
+    :return: A tuple of tuples, ((left xs, left_ys), (right xs, right ys)).
     """
-    plt.gcf().clear()
+    # Cover same y-range as image
+    yvals = np.linspace(0, num_points - 1, num=num_points) * (c.IMG_HEIGHT / (num_points - 1))
 
-    yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
+    left_fit_x = left_fit[0] * yvals ** 2 + left_fit[1] * yvals + left_fit[2]
+    right_fit_x = right_fit[0] * yvals ** 2 + right_fit[1] * yvals + right_fit[2]
 
-    left_fit_x = left_line[0] * yvals ** 2 + left_line[1] * yvals + left_line[2]
-    right_fit_x = right_line[0] * yvals ** 2 + right_line[1] * yvals + right_line[2]
+    return (left_fit_x, yvals), (right_fit_x, yvals)
 
-    plt.plot(left_points[0], left_points[1], 'o', color='blue')
-    plt.plot(right_points[0], right_points[1], 'o', color='blue')
-    plt.xlim(0, 1280)
-    plt.ylim(0, 720)
-    plt.plot(left_fit_x, yvals, color='green', linewidth=3)
-    plt.plot(right_fit_x, yvals, color='red', linewidth=3)
-    plt.gca().invert_yaxis()  # to visualize as we do the images
-
-    plt.show()
 
 def fit_line(points, meter_space=False):
     """
@@ -406,6 +399,7 @@ def get_curvature_radius(line, y):
 
     :param line: The line of which to calculate the curvature radius. NOTE: Must be in real-world
                  coordinates to accurately calculate road curvature.
+    :param y: The y value at which to evaluate the curvature.
 
     :return: The curvature radius of line at y.
     """
@@ -425,12 +419,11 @@ def lines_good(l, r):
     # Check parallel and correct width apart
     width_avg = 880  # taken from dst points
     width_tolerance = 150
-    yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
-    left_fit_x = l[0] * yvals ** 2 + l[1] * yvals + l[2]
-    right_fit_x = r[0] * yvals ** 2 + r[1] * yvals + r[2]
+
+    left_fit_points, right_fit_points = get_line_points(l, r)
 
     correct_width = True
-    for l_x, r_x in zip(left_fit_x, right_fit_x):
+    for l_x, r_x in zip(left_fit_points[0], right_fit_points[0]):
         if r_x - l_x < width_avg - width_tolerance or r_x - l_x > width_avg + width_tolerance:
             correct_width = False
             break
@@ -491,22 +484,6 @@ def hist_search(img, hist_height=80):
 
     return (left_xs, left_ys), (right_xs, right_ys)
 
-# TEST
-def hist_mask_test(img):
-    l, r = hist_search(img)
-    output = np.zeros(img.shape + (3,))
-
-    output[:, :, 0] = img * 255
-    for x, y in zip(l[0], l[1]):
-        x, y = int(x), int(y)  # To suppress warnings about float indeces.
-        output[y, x, 1] = 255
-        output[y, x, 0] = 0
-    for x, y in zip(r[0], r[1]):
-        x, y = int(x), int(y)
-        output[y, x, 2] = 255
-        output[y, x, 0] = 0
-
-    return [output]
 
 def local_search(img, history):
     """
@@ -523,19 +500,17 @@ def local_search(img, history):
 
     # Must exist because of check in find_lines()
     last_good_fit = [elt for elt in history[-c.RELEVANT_HIST:] if elt is not None][-1]
-    left_line_prev, right_line_prev = last_good_fit
+    left_fit_prev, right_fit_prev = last_good_fit
 
-    yvals = np.linspace(0, 719, num=720)  # to cover same y-range as image
-    left_fit_x = left_line_prev[0] * yvals ** 2 + left_line_prev[1] * yvals + left_line_prev[2]
-    right_fit_x = right_line_prev[0] * yvals ** 2 + right_line_prev[1] * yvals + right_line_prev[2]
+    left_fit_points, right_fit_points = get_line_points(left_fit_prev, right_fit_prev, num_points=c.IMG_HEIGHT)
 
     left_xs = []
     left_ys = []
     right_xs = []
     right_ys = []
     for row_num, row in enumerate(img):
-        left_center = int(left_fit_x[row_num])
-        right_center = int(right_fit_x[row_num])
+        left_center = int(left_fit_points[0][row_num])
+        right_center = int(right_fit_points[0][row_num])
 
         # Get a range around the lines.
         left_rect = row[left_center - search_radius:left_center + search_radius]
@@ -656,19 +631,17 @@ def draw_lane(imgs, lines, history):
     """
     imgs_superimposed = np.empty_like(imgs)
 
-    yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
     for i, img in enumerate(imgs):
-        left_line, right_line = lines[i]
+        left_fit, right_fit = lines[i]
 
         # Create an image to draw the lines on
         overlay_warped = np.zeros_like(img).astype(np.uint8)
 
         # Recast the x and y points into usable format for cv2.fillPoly()
-        left_fit_x = left_line[0] * yvals ** 2 + left_line[1] * yvals + left_line[2]
-        right_fit_x = right_line[0] * yvals ** 2 + right_line[1] * yvals + right_line[2]
+        left_fit_points, right_fit_points = get_line_points(left_fit, right_fit)
 
-        pts_left = np.array([np.transpose(np.vstack([left_fit_x, yvals]))])
-        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fit_x, yvals])))])
+        pts_left = np.array([np.transpose(np.vstack(left_fit_points))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack(right_fit_points)))])
         pts = np.hstack((pts_left, pts_right))
 
         # Draw the lane onto the warped blank image
@@ -679,8 +652,8 @@ def draw_lane(imgs, lines, history):
 
         # Overlay curvature text
         height = img.shape[0]
-        left_fit_m = fit_line((left_fit_x, yvals), meter_space=True)
-        right_fit_m = fit_line((right_fit_x, yvals), meter_space=True)
+        left_fit_m = fit_line(left_fit_points, meter_space=True)
+        right_fit_m = fit_line(right_fit_points, meter_space=True)
         left_curvature = get_curvature_radius(left_fit_m, height)
         right_curvature = get_curvature_radius(right_fit_m, height)
         curvature = (left_curvature + right_curvature) / 2
@@ -689,21 +662,21 @@ def draw_lane(imgs, lines, history):
         if history[i] is None:
             text_color = (0, 0, 255)
 
-        cv2.putText(img, "Curvature Radius: " + str(curvature) + 'm', (20, 50),
+        cv2.putText(img, "Curvature Radius: " + '{:.3f}'.format(curvature) + 'm', (20, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
         # Overlay distance from lane center
         # Negative distances represent left of center
         frame_center_m = (c.IMG_WIDTH / 2) * c.MPP_X
-        left_bottom = left_fit_x[-1] * c.MPP_X
-        right_bottom = right_fit_x[-1] * c.MPP_X
+        left_bottom = left_fit_points[0][-1] * c.MPP_X
+        right_bottom = right_fit_points[0][-1] * c.MPP_X
 
         dist_from_left = frame_center_m - left_bottom
         dist_from_right = right_bottom - frame_center_m
         dist_from_center = dist_from_left - dist_from_right
 
-        cv2.putText(img, "Distance from Center: " + str(dist_from_center) + 'm', (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+        cv2.putText(img, "Distance from Center: " + '{:.3f}'.format(dist_from_center) + 'm',
+                    (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
         # Combine the result with the original image
         imgs_superimposed[i] = cv2.addWeighted(img, 1, overlay, 0.3, 0)
@@ -741,3 +714,65 @@ def display_images(imgs):
         cv2.moveWindow('image', 0, 0)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+
+
+def visualize_find_fit(img):
+    """
+    Visualizes which pixels were selected for the lane lines and the lines that were fit to them.
+
+    :param img: The mask in which to search for lane lines.
+
+    :return: An image with pixels found in each lane line colored and the fitted lines plotted.
+    """
+    l, r = hist_search(img)
+
+    output = np.dstack([img * 255] * 3)
+    for x, y in zip(l[0], l[1]):
+        x, y = int(x), int(y)  # To suppress warnings about float indices.
+        output[y, x, 1] = 255
+        output[y, x, 2] = 0
+        output[y, x, 0] = 0
+    for x, y in zip(r[0], r[1]):
+        x, y = int(x), int(y)
+        output[y, x, 2] = 255
+        output[y, x, 1] = 0
+        output[y, x, 0] = 0
+
+    left_fit = fit_line(l)
+    right_fit = fit_line(r)
+
+    left_fit_points, right_fit_points = get_line_points(left_fit, right_fit, num_points=720)
+
+    # cv2.polylines(output, [np.reshape(np.int32(zip(left_fit_points)), [-1, 1, 2])], False, (255, 255, 255))
+    # cv2.polylines(output, [np.reshape(np.int32(zip(right_fit_points)), [-1, 1, 2])], False, (255, 255, 255))
+
+    for x, y in zip(left_fit_points[0], left_fit_points[1]):
+        cv2.circle(output, (int(x), int(y)), 5, (255, 0, 0), -1)
+    for x, y in zip(right_fit_points[0], right_fit_points[1]):
+        cv2.circle(output, (int(x), int(y)), 5, (255, 0, 0), -1)
+
+    return [output]
+
+
+def visualize_lines(left_points, right_points, left_line, right_line):
+    """
+    Visualize lane line fits for given line points.
+
+    :param left_points: Points in the left line.
+    :param right_points: Points in the right line.
+    :param left_line: The polynomial fit for the left line.
+    :param right_line: The polynomial fit for the right line.
+    """
+    plt.gcf().clear()
+
+    left_fit_points, right_fit_points = get_line_points(left_line, right_line)
+
+    plt.plot(left_points[0], left_points[1], 'o', color='blue')
+    plt.plot(right_points[0], right_points[1], 'o', color='blue')
+    plt.xlim(0, 1280)
+    plt.ylim(0, 720)
+    plt.plot(left_fit_points[0], left_fit_points[1], color='green', linewidth=3)
+    plt.plot(right_fit_points[0], right_fit_points[1], color='red', linewidth=3)
+    plt.gca().invert_yaxis()  # to visualize as we do the images
+
+    plt.show()

@@ -1,6 +1,7 @@
 data
 *.idea
 *.xml
+output_images/test
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

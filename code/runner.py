@@ -23,11 +23,10 @@ def run(input_path):
     masks_birdseye = utils.birdseye(masks)
 
     print 'Find lines'
-    # (Left fit, right fit) for each image
     lines, history = utils.find_lines(masks_birdseye)
 
     print 'Draw lanes'
-    imgs_superimposed = utils.draw_lane(imgs, lines, history)
+    imgs_superimposed = utils.draw_lane(imgs_undistorted, lines, history)
 
     return imgs_superimposed
 
@@ -44,8 +43,9 @@ def test():
         imgs = run(path)
         # utils.display_images(imgs)
 
-        save_path = join(c.SAVE_DIR, 'test_' + basename(path))
+        save_path = join(c.SAVE_DIR, 'test/' + basename(path))
         utils.save(imgs, save_path)
+
 
 ##
 # Handle command line input
@@ -53,7 +53,7 @@ def test():
 
 def print_usage():
     print 'Usage:'
-    print '(-p / --path=) <path/to/image/or/video> (Required)'
+    print '(-p / --path=) <path/to/image/or/video> (Required.)'
     print '(-T / --test)  (Boolean flag. Whether to run the test function instead of normal run.)'
 
 if __name__ == "__main__":

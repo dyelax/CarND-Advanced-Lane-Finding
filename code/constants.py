@@ -42,8 +42,8 @@ LINE_WIDTH = 200
 # The pixel width of lines from the center point. Used for searching for lines around a peak.
 LINE_RADIUS = LINE_WIDTH / 2
 
-IMG_HEIGHT = 720
-IMG_WIDTH = 1280
+IMG_HEIGHT = 720.
+IMG_WIDTH = 1280.
 
 # The number of most recent elements from the fit history to consider when looking for new lines.
 RELEVANT_HIST = 5
