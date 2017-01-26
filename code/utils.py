@@ -396,12 +396,9 @@ def fit_line(points, meter_space=False):
 
     :return: The coefficients of the fitted polynomial.
     """
-    mpp_y = 30. / 720  # meters per pixel in y dimension
-    mpp_x = 3.7 / 880  # meters per pixel in x dimension
-
     # Determine whether to fit the line in meter or pixel space.
-    ymult = mpp_y if meter_space else 1
-    xmult = mpp_x if meter_space else 1
+    ymult = c.MPP_Y if meter_space else 1
+    xmult = c.MPP_X if meter_space else 1
 
     # noinspection PyTypeChecker
     fit = np.polyfit(points[1] * ymult, points[0] * xmult, 2)
@@ -437,7 +434,7 @@ def lines_good(l, r):
 
     # Check parallel and correct width apart
     width_avg = 880  # taken from dst points
-    width_tolerance = 40
+    width_tolerance = 150
     yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
     left_fit_x = l[0] * yvals ** 2 + l[1] * yvals + l[2]
     right_fit_x = r[0] * yvals ** 2 + r[1] * yvals + r[2]
@@ -531,15 +528,47 @@ def local_search(img, history):
     :return: A tuple of tuples ((left xs, left ys), (right xs, right ys)) of the points in both lane
              lines.
     """
-    try:
-        last_good_fit = [elt for elt in history[-c.RELEVANT_HIST:] if elt is not None][-1]
-    except IndexError:
-        return None, None
+    # Radius around the last good line to search for new line pixels.
+    search_radius = c.LINE_RADIUS + 10
 
-    yvals = np.linspace(0, 100, num=101) * 7.2  # to cover same y-range as image
+    # Must exist because of check in find_lines()
+    last_good_fit = [elt for elt in history[-c.RELEVANT_HIST:] if elt is not None][-1]
+    left_line_prev, right_line_prev = last_good_fit
 
-    left_fit_x = left_line[0] * yvals ** 2 + left_line[1] * yvals + left_line[2]
-    right_fit_x = right_line[0] * yvals ** 2 + right_line[1] * yvals + right_line[2]
+    yvals = np.linspace(0, 719, num=720)  # to cover same y-range as image
+    left_fit_x = left_line_prev[0] * yvals ** 2 + left_line_prev[1] * yvals + left_line_prev[2]
+    right_fit_x = right_line_prev[0] * yvals ** 2 + right_line_prev[1] * yvals + right_line_prev[2]
+
+    left_xs = []
+    left_ys = []
+    right_xs = []
+    right_ys = []
+    for row_num, row in enumerate(img):
+        left_center = int(left_fit_x[row_num])
+        right_center = int(right_fit_x[row_num])
+
+        # Get a range around the lines.
+        left_rect = row[left_center - search_radius:left_center + search_radius]
+        right_rect = row[right_center - search_radius:right_center + search_radius]
+
+        # Get coordinates of points in rects
+        # Relative x locations of the points in the row
+        left_points_relative = np.where(left_rect)
+        right_points_relative = np.where(right_rect)
+
+        # Absolute locations in img as (x, y)
+        left_points = (left_points_relative[0] + left_center - search_radius,
+                       [row_num] * len(left_points_relative[0]))
+        right_points = (right_points_relative[0] + right_center - search_radius,
+                        [row_num] * len(right_points_relative[0]))
+
+        # Append points
+        left_xs = np.concatenate([left_xs, left_points[0]])
+        left_ys = np.concatenate([left_ys, left_points[1]])
+        right_xs = np.concatenate([right_xs, right_points[0]])
+        right_ys = np.concatenate([right_ys, right_points[1]])
+
+    return (left_xs, left_ys), (right_xs, right_ys)
 
 
 def find_lines(masks):
@@ -548,8 +577,10 @@ def find_lines(masks):
 
     :param masks: Binary mask images of the lane lines.
 
-    :return: A list containing a tuple for each image, (left fit, right fit), or None if the image
-             should be skipped.
+    :return: A tuple (lines, history), where lines is a list containing a tuple for each image,
+             (left fit, right fit). and history is a list where each element is a tuple (left fit,
+             right fit) for a previous frame, or None if no fit was found for a frame. (used to
+             display when fallback lines were used).
     """
     lines = []
 
@@ -557,50 +588,58 @@ def find_lines(masks):
     # fit was found for a frame.
     history = []
     for mask in masks:
-        # Choose lines with the following priority:
+        # Until the first good line is found, do naive histogram search.
+        if len([elt for elt in history if elt is not None]) == 0:
+            left_points, right_points = hist_search(mask)
+            left_fit = fit_line(left_points)
+            right_fit = fit_line(right_points)
+
+            if lines_good(left_fit, right_fit):
+                history.append((left_fit, right_fit))
+            else:
+                history.append(None)
+
+            lines.append((left_fit, right_fit))
+
+            continue
+
+        # After, choose lines with the following priority:
         # 1. First, try get the lines from a local search based on past lines found. If those lines
         #    are good, use them.
         # 2. If good lines were found in the last c.RELEVANT_HIST frames, use the most recent good
         #    lines found.
         # 3. Do a naive histogram search. If those lines are good, use them.
-        # 4. Otherwise, use the last good lines found, regardless of time.
-        # 5. If there has never been a good fit, use the bad histogram search.
+        # 4. Otherwise, use the last good fit found, regardless of time.
 
         # If a new fit was found and it was good (as opposed to taking a previous fit). Used to
         # place tuples or nones in history.
         new_good_fit = True
 
-        # Whether to skip this frame (by appending None to lines)
-        skip_frame = False
+        # If good lines were found in the last c.RELEVANT_HIST frames, try priorities 1 and 2:
+        if len([elt for elt in history[-c.RELEVANT_HIST:] if elt is not None]) != 0:
+            # Priority 1:
+            left_points, right_points = local_search(mask, history)
+            left_fit = fit_line(left_points)
+            right_fit = fit_line(right_points)
 
-        # Priority 1:
-        left_points, right_points = local_search(mask, history)
-        left_fit = fit_line(left_points)
-        right_fit = fit_line(right_points)
-
-        if not lines_good(left_fit, right_fit):
-            # Priority 2:
-            try:
+            if not lines_good(left_fit, right_fit):
+                # Priority 2:
                 last_good = [elt for elt in history[-c.RELEVANT_HIST:] if elt is not None][-1]
                 left_fit, right_fit = last_good
                 new_good_fit = False
-            except IndexError:
-                # No good fits in relevant history
-                # Priority 3:
-                left_points, right_points = hist_search(mask)
-                left_fit = fit_line(left_points)
-                right_fit = fit_line(right_points)
+        else:
+            # No good fits in relevant history
+            # Priority 3:
+            left_points, right_points = hist_search(mask)
+            left_fit = fit_line(left_points)
+            right_fit = fit_line(right_points)
 
-                if not lines_good(left_fit, right_fit):
-                    # Priority 4:
-                    new_good_fit = False
-                    try:
-                        last_good = [elt for elt in history if elt is not None][-1]
-                        left_fit, right_fit = last_good
-
-                    except IndexError:
-                        # There have never been any good fits
-                        skip_frame = True
+            if not lines_good(left_fit, right_fit):
+                # Priority 4:
+                new_good_fit = False
+                # Will never fail because of check at beginning of loop
+                last_good = [elt for elt in history if elt is not None][-1]
+                left_fit, right_fit = last_good
 
         # Update history
         if new_good_fit:
@@ -608,22 +647,20 @@ def find_lines(masks):
         else:
             history.append(None)
 
-        # Update used lines
-        if skip_frame:
-            lines.append(None)
-        else:
-            lines.append((left_fit, right_fit))
+        lines.append((left_fit, right_fit))
 
-    return lines
+    return lines, history
 
 
-def draw_lane(imgs, lines):
+def draw_lane(imgs, lines, history):
     """
     Superimposes the lane on the original images.
 
     :param imgs: The original images.
-    :param lines: A list containing a tuple for each image, (left fit, right fit), or None if the
-                  image should be skipped.
+    :param lines: A list containing a tuple for each image, (left fit, right fit)
+    :param history: a list where each element is a tuple (left fit, right fit) for a previous frame,
+                    or None if no fit was found for a frame. (used to display when fallback lines
+                    were used).
 
     :return: Images consisting of the lane prediction superimposed on the original street image.
     """
@@ -631,10 +668,6 @@ def draw_lane(imgs, lines):
 
     yvals = np.linspace(0, 100, num=101)*7.2  # to cover same y-range as image
     for i, img in enumerate(imgs):
-        # Check if frame should be skipped.
-        if lines[i] is None:
-            continue
-
         left_line, right_line = lines[i]
 
         # Create an image to draw the lines on
@@ -656,16 +689,31 @@ def draw_lane(imgs, lines):
 
         # Overlay curvature text
         height = img.shape[0]
-        left_fit_m = fit_line(zip(left_fit_x, yvals), meter_space=True)
-        right_fit_m = fit_line(zip(right_fit_x, yvals), meter_space=True)
+        left_fit_m = fit_line((left_fit_x, yvals), meter_space=True)
+        right_fit_m = fit_line((right_fit_x, yvals), meter_space=True)
         left_curvature = get_curvature_radius(left_fit_m, height)
         right_curvature = get_curvature_radius(right_fit_m, height)
         curvature = (left_curvature + right_curvature) / 2
 
+        text_color = (255, 255, 255)
+        if history[i] is None:
+            text_color = (0, 0, 255)
+
         cv2.putText(img, "Curvature Radius: " + str(curvature) + 'm', (20, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
         # TODO: overlay distance from lane center
+        # Negative distances represent left of center
+        frame_center_m = (c.IMG_WIDTH / 2) * c.MPP_X
+        left_bottom = left_fit_x[-1]
+        right_bottom = right_fit_x[-1]
+
+        dist_from_left = frame_center_m - left_bottom
+        dist_from_right = right_bottom - frame_center_m
+        dist_from_center = dist_from_left - dist_from_right
+
+        cv2.putText(img, "Distance from Center: " + str(dist_from_center) + 'm', (20, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
 
         # Combine the result with the original image

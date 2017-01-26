@@ -23,11 +23,11 @@ def run(input_path):
     masks_birdseye = utils.birdseye(masks)
 
     print 'Find lines'
-    # (Left fit, right fit) for each image, or None if image should be skipped
-    lines = utils.find_lines(masks_birdseye)
+    # (Left fit, right fit) for each image
+    lines, history = utils.find_lines(masks_birdseye)
 
     print 'Draw lanes'
-    imgs_superimposed = utils.draw_lane(imgs, lines)
+    imgs_superimposed = utils.draw_lane(imgs, lines, history)
 
     return imgs_superimposed
 

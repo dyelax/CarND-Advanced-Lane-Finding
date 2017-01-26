@@ -47,3 +47,8 @@ IMG_WIDTH = 1280
 
 # The number of most recent elements from the fit history to consider when looking for new lines.
 RELEVANT_HIST = 5
+
+# meters per pixel in y dimension
+MPP_Y = 30. / 720
+# meters per pixel in x dimension
+MPP_X = 3.7 / 880
