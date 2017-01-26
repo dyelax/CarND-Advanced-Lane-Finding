@@ -20,7 +20,7 @@ The goals / steps of this project are the following:
 [image5]: ./output_images/birdseye.jpg "Warp Example"
 [image6]: ./output_images/find_fit.jpg "Fit Visual"
 [image7]: ./output_images/test3_output.jpg "Output"
-[video1]: ./output_images/project_video.mp4 "Video"
+[video1]: ./output_images/project_video.gif "Video"
 
 ---
 ## Project Organization
@@ -42,11 +42,9 @@ You're reading it!
 
 ####1. Briefly state how you computed the camera matrix and distortion coefficients. Provide an example of a distortion corrected calibration image.
 
-The code for this step is contained in in lines 73 through 146 of `some_file.py`.  
+I calibrate the camera using given distorted images of a chessboard and the `cv2.findChessboardCorners()` function. I start by preparing "object points", which will be the (x, y, z) coordinates of the chessboard corners in the world. Here I am assuming the chessboard is fixed on the (x, y) plane at z=0, such that the object points are the same for each calibration image.  Thus, `obj_points_const` is just a replicated array of coordinates, and `obj_points` will be appended with a copy of it every time I successfully detect all chessboard corners in a test image.  `img_points` will be appended with the (x, y) pixel position of each of the corners in the image plane with each successful chessboard detection.  
 
-I calibrate the camera using given distorted images of a chessboard and the `cv2.findChessboardCorners` function. I start by preparing "object points", which will be the (x, y, z) coordinates of the chessboard corners in the world. Here I am assuming the chessboard is fixed on the (x, y) plane at z=0, such that the object points are the same for each calibration image.  Thus, `obj_points_const` is just a replicated array of coordinates, and `obj_points` will be appended with a copy of it every time I successfully detect all chessboard corners in a test image.  `img_points` will be appended with the (x, y) pixel position of each of the corners in the image plane with each successful chessboard detection.  
-
-I then used the output `obj_points` and `img_points` to compute the camera calibration and distortion coefficients using the `cv2.calibrateCamera()` function.  I applied this distortion correction to the test image using the `cv2.undistort()` function and obtained this result: 
+I then use the output `obj_points` and `img_points` to compute the camera calibration and distortion coefficients using the `cv2.calibrateCamera()` function.  I applied this distortion correction to the test image using the `cv2.undistort()` function and obtained this result: 
 
 ![alt text][image1]
 
@@ -65,11 +63,11 @@ To correct the distortion of road images, I use the function `undistort_imgs()` 
 ![alt text][image3]
 
 ####2. Describe how (and identify where in your code) you used color transforms, gradients or other methods to create a thresholded binary image.  Provide an example of a binary image result.
-I use a combination of geometric masking and color and gradient thresholds to generate a binary image (thresholding steps at lines 149 through 323 in `utils.py`). 
+I use a combination of geometric, color and gradient masking to generate a binary image (thresholding steps at lines 149 through 323 in `utils.py`). 
 
 As a geometric mask, I use the functions `quad_mask()` and `tri_anti_mask()` at lines 177 and 206, respectively, in `utils.py`. `quad_mask()` keeps everything within a trapezoidal region where lane lines are likely to exist. This helps to remove lines caused by cars in other lanes and scenery. `tri_anti_mask()` removes everything within a small triangle near the bottom center of the image. This helps to remove lines caused by shadows and cracks in the middle of the lane.
 
-To create a color-based mask, I used the function `color_mask()` at line 233 in `utils.py`. `color_mask()` uses the hue and saturation channels of the image, as well as a grayscale image, as these were the color channels that had the clearest distinction of lane line vs. road, even in varying light conditions. Values between (100, 255), (15, 70) and (190, 255) are kept for each of the respective channels, and the final color mask is a combination of any pixel within any of the thresholds.
+To create a color mask, I used the function `color_mask()` at line 233 in `utils.py`. `color_mask()` uses the hue, saturation and grayscale channels of the image, as these were the color channels that had the clearest distinction of lane line vs. road, even in varying light conditions. Values between (100, 255), (15, 70) and (190, 255) are kept for each of the respective channels, and the final color mask is a combination of any pixel within any of the thresholds.
 
 To create a gradient mask, I use the function `grad_mask()` at line 281 in `utils.py`. I calculate the Sobel gradient in the x direction on saturation and grascale channels. I use a Sobel kernel size of 7 to smooth the results.  Values between (30, 255) and (50, 255) are kept for each of the respective channels, and, like the color mask, all pixels in either channel mask are combined into the final gradient mask.
 
@@ -85,14 +83,14 @@ The code for my perspective transform includes a function called `birdseye()`, w
 
 This resulted in the following source and destination points:
 
-`
-| SRC       | DST       | 
+
+| SRC       | DST       |
 |:---------:|:---------:| 
 | 257,  685 | 200,  720 | 
 | 1050, 685 | 1080, 720 |
 | 583,  460 | 200,  0   |
 | 702,  460 | 1080, 0   |
-`
+
 
 I verified that my perspective transform was working as expected by verifying that the lane lines appear parallel in the warped images:
 
