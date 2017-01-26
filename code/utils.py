@@ -7,7 +7,6 @@ import pickle
 import matplotlib.pyplot as plt
 
 import constants as c
-from lines import Lines
 
 
 ##
@@ -34,11 +33,6 @@ def read_input(path):
     else:
         # Input is a video.
         vidcap = cv2.VideoCapture(path)
-
-        # Get video properties
-        # num_frames = vidcap.get(cv2.CAP_PROP_FRAME_COUNT)
-        # width = vidcap.get(cv2.CAP_PROP_FRAME_WIDTH)
-        # height = vidcap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         # Load frames
         frames_list = []
@@ -428,10 +422,6 @@ def lines_good(l, r):
 
     :return: A boolean, whether the two lane lines make sense.
     """
-    # Check parallel
-    # parallel_tolerance = 5e-4
-    # parallel = (l[0] > r[0] - parallel_tolerance) and (l[0] < r[0] + parallel_tolerance)
-
     # Check parallel and correct width apart
     width_avg = 880  # taken from dst points
     width_tolerance = 150
@@ -682,7 +672,7 @@ def draw_lane(imgs, lines, history):
         pts = np.hstack((pts_left, pts_right))
 
         # Draw the lane onto the warped blank image
-        cv2.fillPoly(overlay_warped, np.int_([pts]), (0, 255, 0))
+        cv2.fillPoly(overlay_warped, np.int_([pts]), (228, 179, 1))
 
         # Warp the blank back to original image space
         overlay = birdseye(np.array([overlay_warped]), inverse=True)[0]
@@ -702,11 +692,11 @@ def draw_lane(imgs, lines, history):
         cv2.putText(img, "Curvature Radius: " + str(curvature) + 'm', (20, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
-        # TODO: overlay distance from lane center
+        # Overlay distance from lane center
         # Negative distances represent left of center
         frame_center_m = (c.IMG_WIDTH / 2) * c.MPP_X
-        left_bottom = left_fit_x[-1]
-        right_bottom = right_fit_x[-1]
+        left_bottom = left_fit_x[-1] * c.MPP_X
+        right_bottom = right_fit_x[-1] * c.MPP_X
 
         dist_from_left = frame_center_m - left_bottom
         dist_from_right = right_bottom - frame_center_m
@@ -714,7 +704,6 @@ def draw_lane(imgs, lines, history):
 
         cv2.putText(img, "Distance from Center: " + str(dist_from_center) + 'm', (20, 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
-
 
         # Combine the result with the original image
         imgs_superimposed[i] = cv2.addWeighted(img, 1, overlay, 0.3, 0)
@@ -727,6 +716,11 @@ def draw_lane(imgs, lines, history):
 ##
 
 def arr2bar(arr):
+    """
+    Displays an array as a bar graph, where each element is the value of one bar.
+
+    :param arr: The array to display.
+    """
     fig, ax = plt.subplots()
     ax.bar(np.arange(len(arr)), arr, 1)
     plt.show()
