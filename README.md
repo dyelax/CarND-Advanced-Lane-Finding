@@ -49,7 +49,7 @@ I then use the output `obj_points` and `img_points` to compute the camera calibr
 
 Original image:
 
-![alt text][image1]
+![alt text][image0]
 
 Undistorted image:
 
